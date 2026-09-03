@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="128" fill="#0f172a"/>
+  <!-- Человек -->
+  <circle cx="190" cy="180" r="55" fill="#10b981"/>
+  <path d="M120 340 C120 260 260 260 260 340 Z" fill="#10b981"/>
+  <!-- Собака -->
+  <ellipse cx="340" cy="270" rx="65" ry="50" fill="#f59e0b"/>
+  <circle cx="380" cy="220" r="35" fill="#f59e0b"/>
+  <path d="M360 190 L345 160 L375 180 Z" fill="#d97706"/>
+  <path d="M395 190 L410 160 L380 180 Z" fill="#d97706"/>
+  <circle cx="390" cy="215" r="5" fill="#0f172a"/>
+  <ellipse cx="405" cy="225" rx="6" ry="4" fill="#0f172a"/>
+</svg>
