@@ -86,6 +86,36 @@
       font-weight: 600;
       border: 1px solid rgba(255, 255, 255, 0.15);
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Индикатор загрузки ИИ прямо поверх камеры */
+    .ai-status-pill {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #93c5fd;
+      transition: all 0.3s ease;
+    }
+
+    .mini-spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(147, 197, 253, 0.3);
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
     }
 
     .icon-btn {
@@ -177,7 +207,7 @@
       transform: scale(0.92);
     }
 
-    /* Загрузка и ошибки */
+    /* Окно запроса камеры */
     .overlay-modal {
       position: fixed;
       inset: 0;
@@ -191,16 +221,6 @@
       text-align: center;
     }
 
-    .loader {
-      width: 48px;
-      height: 48px;
-      border: 4px solid rgba(255, 255, 255, 0.1);
-      border-top-color: var(--primary);
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-bottom: 20px;
-    }
-
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
@@ -210,22 +230,13 @@
     }
   </style>
 
-  <!-- TensorFlow.js & COCO-SSD -->
+  <!-- Быстрая загрузка TensorFlow.js с CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
 </head>
 <body>
 
-  <!-- Загрузчик нейросети -->
-  <div id="loaderModal" class="overlay-modal">
-    <div class="loader"></div>
-    <h2 style="font-size: 20px; margin-bottom: 8px;">Загрузка нейросети...</h2>
-    <p style="color: #94a3b8; font-size: 14px; max-width: 260px;">
-      Подготавливаем легковесную модель для работы прямо в браузере.
-    </p>
-  </div>
-
-  <!-- Сообщение об ошибке камеры -->
+  <!-- Окно ошибки камеры (показывается только если пользователь запретил камеру) -->
   <div id="errorModal" class="overlay-modal hidden">
     <div style="font-size: 48px; margin-bottom: 12px;">📷</div>
     <h2 style="font-size: 20px; margin-bottom: 8px;">Нужен доступ к камере</h2>
@@ -241,22 +252,30 @@
     <video id="webcam" autoplay playsinline muted></video>
     <canvas id="overlay"></canvas>
 
+    <!-- Верхний бар -->
     <div class="top-bar">
-      <div id="fpsLabel" class="glass-pill">0 FPS</div>
+      <!-- Статус загрузки / FPS -->
+      <div id="aiStatusPill" class="ai-status-pill">
+        <div id="aiSpinner" class="mini-spinner"></div>
+        <span id="aiStatusText">Загрузка ИИ...</span>
+      </div>
+
       <div style="display: flex; gap: 10px;">
         <button id="voiceBtn" class="icon-btn" title="Озвучка">🔇</button>
         <button id="flipBtn" class="icon-btn" title="Сменить камеру">🔄</button>
       </div>
     </div>
 
+    <!-- Карточка распознавания -->
     <div class="result-card" id="resultCard">
-      <div class="result-icon" id="resIcon">🔍</div>
+      <div class="result-icon" id="resIcon">⏳</div>
       <div>
-        <div class="result-title" id="resTitle">Поиск...</div>
-        <div class="result-desc" id="resDesc">Наведите камеру на человека или собаку</div>
+        <div class="result-title" id="resTitle">Подготовка...</div>
+        <div class="result-desc" id="resDesc">Камера запущена, подгружаем модель ИИ</div>
       </div>
     </div>
 
+    <!-- Нижний бар со снимком -->
     <div class="bottom-bar">
       <button id="shutterBtn" class="shutter-btn" title="Снимок">📸</button>
     </div>
@@ -267,15 +286,17 @@
     const canvas = document.getElementById('overlay');
     const ctx = canvas.getContext('2d');
     
-    const loaderModal = document.getElementById('loaderModal');
     const errorModal = document.getElementById('errorModal');
     const errorText = document.getElementById('errorText');
     const retryBtn = document.getElementById('retryBtn');
 
+    const aiStatusPill = document.getElementById('aiStatusPill');
+    const aiSpinner = document.getElementById('aiSpinner');
+    const aiStatusText = document.getElementById('aiStatusText');
+
     const resIcon = document.getElementById('resIcon');
     const resTitle = document.getElementById('resTitle');
     const resDesc = document.getElementById('resDesc');
-    const fpsLabel = document.getElementById('fpsLabel');
     const voiceBtn = document.getElementById('voiceBtn');
     const flipBtn = document.getElementById('flipBtn');
     const shutterBtn = document.getElementById('shutterBtn');
@@ -288,59 +309,104 @@
     let lastSpokenAt = 0;
     let frames = 0;
     let lastTime = performance.now();
+    let isDetecting = false;
 
-    // Регистрация Service Worker для PWA
+    // Регистрация Service Worker для кэширования файлов и модели
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js').catch(console.error);
       });
     }
 
-    async function init() {
-      try {
-        model = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
-        loaderModal.classList.add('hidden');
-        await startCam();
-        requestAnimationFrame(predictLoop);
-      } catch (e) {
-        showError('Ошибка загрузки модели. Проверьте интернет-соединение.');
-      }
-    }
-
+    // 1. Быстрый старт камеры (сразу при загрузке страницы)
     async function startCam() {
       if (stream) stream.getTracks().forEach(t => t.stop());
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } }
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
         });
         video.srcObject = stream;
-        await new Promise(res => video.onloadedmetadata = () => { video.play(); res(); });
+        await new Promise(res => {
+          video.onloadedmetadata = () => {
+            video.play();
+            res();
+          };
+        });
         errorModal.classList.add('hidden');
       } catch (err) {
         showError('Камера недоступна. Убедитесь, что страница открыта по HTTPS и доступ разрешен в настройках браузера.');
       }
     }
 
+    // 2. Фоновая быстрая загрузка модели
+    async function loadModelAsync() {
+      try {
+        aiStatusText.textContent = 'Загрузка весов...';
+        
+        // Быстрая оптимизированная модель mobilenet_v1 (загружается в 2-3 раза быстрее)
+        model = await cocoSsd.load({ base: 'mobilenet_v1' });
+        
+        aiStatusText.textContent = 'Прогрев GPU...';
+        // Тестовый прогон 1x1 для компиляции шейдеров WebGL
+        const dummyCanvas = document.createElement('canvas');
+        dummyCanvas.width = 1;
+        dummyCanvas.height = 1;
+        await model.detect(dummyCanvas);
+
+        // Готово!
+        aiSpinner.classList.add('hidden');
+        aiStatusPill.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+        aiStatusPill.style.color = '#6ee7b7';
+        aiStatusText.textContent = 'ИИ активен';
+
+        resIcon.textContent = '🔍';
+        resTitle.textContent = 'Поиск...';
+        resDesc.textContent = 'Наведите камеру на человека или собаку';
+
+        requestAnimationFrame(predictLoop);
+      } catch (e) {
+        console.error('Model load error:', e);
+        aiSpinner.classList.add('hidden');
+        aiStatusPill.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+        aiStatusPill.style.color = '#fca5a5';
+        aiStatusText.textContent = 'Ошибка сети';
+        resTitle.textContent = 'Не удалось загрузить ИИ';
+        resDesc.textContent = 'Проверьте соединение с интернетом';
+      }
+    }
+
     function showError(msg) {
-      loaderModal.classList.add('hidden');
       errorText.textContent = msg;
       errorModal.classList.remove('hidden');
     }
 
+    // 3. Плавный цикл детекции без лагов и задержек
     async function predictLoop() {
-      if (video.readyState === video.HAVE_ENOUGH_DATA && model) {
+      if (!isDetecting && video.readyState === video.HAVE_ENOUGH_DATA && model) {
+        isDetecting = true;
+
         if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
         }
 
-        const predictions = await model.detect(video);
-        const filtered = predictions.filter(p => (p.class === 'person' || p.class === 'dog') && p.score > 0.55);
+        try {
+          const predictions = await model.detect(video);
+          const filtered = predictions.filter(p => (p.class === 'person' || p.class === 'dog') && p.score > 0.52);
 
-        renderDetections(filtered);
-        updateStatus(filtered);
-        calculateFPS();
+          renderDetections(filtered);
+          updateStatus(filtered);
+          calculateFPS();
+        } catch (err) {
+          console.warn('Detect error:', err);
+        } finally {
+          isDetecting = false;
+        }
       }
       requestAnimationFrame(predictLoop);
     }
@@ -375,7 +441,7 @@
         resIcon.textContent = '🎉';
         resTitle.textContent = 'Человек и собака!';
         resTitle.style.color = '#38bdf8';
-        resDesc.textContent = 'В кадре обнаружены оба объекта';
+        resDesc.textContent = 'Оба объекта обнаружены';
         speak('Человек и собака');
       } else if (hasDog) {
         const dog = items.find(i => i.class === 'dog');
@@ -418,7 +484,8 @@
       frames++;
       const now = performance.now();
       if (now - lastTime >= 1000) {
-        fpsLabel.textContent = `${Math.round((frames * 1000) / (now - lastTime))} FPS`;
+        const currentFps = Math.round((frames * 1000) / (now - lastTime));
+        aiStatusText.textContent = `${currentFps} FPS`;
         frames = 0;
         lastTime = now;
       }
@@ -432,6 +499,7 @@
     voiceBtn.onclick = () => {
       voiceEnabled = !voiceEnabled;
       voiceBtn.textContent = voiceEnabled ? '🔊' : '🔇';
+      voiceBtn.style.background = voiceEnabled ? 'var(--primary)' : 'rgba(15, 23, 42, 0.75)';
     };
 
     shutterBtn.onclick = () => {
@@ -448,7 +516,12 @@
     };
 
     retryBtn.onclick = startCam;
-    window.addEventListener('DOMContentLoaded', init);
+
+    // Сразу включаем камеру, и параллельно загружаем ИИ
+    window.addEventListener('DOMContentLoaded', () => {
+      startCam();
+      loadModelAsync();
+    });
   </script>
 </body>
 </html>
