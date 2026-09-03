@@ -1,0 +1,2 @@
+# scaner
+dog/human
